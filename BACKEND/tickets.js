@@ -110,6 +110,7 @@ Ticket information:
 
     return parsedResult;
   } catch (e) {
+    console.error("Gemini AI call failed:", e.message);
     return {
       summary: "Unable to process ticket automatically",
       priority: "MEDIUM",
@@ -255,4 +256,4 @@ ticketRoutes.get("/:id", getTicket);
 ticketRoutes.post("/", createTicket);
 ticketRoutes.put("/:id", updateTicket);
 ticketRoutes.put("/:id/status", updateTicketStatus);
-                  
+      
