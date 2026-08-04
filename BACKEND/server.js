@@ -4,8 +4,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
-import { serve } from "inngest/express";
-import { inngest, onTicketCreated, ticketRoutes } from "./tickets.js";
+import { ticketRoutes } from "./tickets.js";
 import { userRoutes } from "./users.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -20,14 +19,6 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api/users", userRoutes);
 app.use("/api/tickets", ticketRoutes);
-
-app.use(
-  "/api/inngest",
-  serve({
-    client: inngest,
-    functions: [onTicketCreated],
-  })
-);
 
 mongoose
   .connect(process.env.MONGO_URI)
