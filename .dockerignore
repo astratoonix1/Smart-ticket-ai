@@ -1,6 +1,7 @@
-node_modules
-FRONTEND
 .git
 .gitignore
 README.md
 *.log
+node_modules
+FRONTEND/node_modules
+BACKEND/node_modules
