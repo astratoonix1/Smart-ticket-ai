@@ -2,9 +2,13 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 import { serve } from "inngest/express";
 import { inngest, onTicketCreated, ticketRoutes } from "./tickets.js";
 import { userRoutes } from "./users.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 dotenv.config();
 const PORT = process.env.PORT || 3000;
@@ -34,8 +38,15 @@ mongoose
     console.error("MongoDB connection error: ", err);
   });
 
-app.get("/", (req, res) => {
-  res.send("Hello World");
+// Serve the built frontend (if present, e.g. when built via Dockerfile)
+const publicDir = path.join(__dirname, "public");
+app.use(express.static(publicDir));
+
+// Any non-API route returns the frontend so client-side routing works
+app.get(/^(?!\/api).*/, (req, res) => {
+  res.sendFile(path.join(publicDir, "index.html"), (err) => {
+    if (err) res.status(200).send("Backend is running. (Frontend not built into this image.)");
+  });
 });
 
 app.listen(PORT, () => {
