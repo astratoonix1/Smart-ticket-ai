@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
-import { Inngest, NonRetriableError } from "inngest";
 import { User } from "./users.js";
 
 // ── Model ──────────────────────────────────────────────
@@ -120,58 +119,38 @@ Ticket information:
   }
 };
 
-// ── Inngest (background job) ───────────────────────────
-export const inngest = new Inngest({ id: "smartticket-ai" });
+// ── AI Processing + Auto-assignment (runs directly, no queue needed) ──
+const processTicketWithAI = async (ticketId) => {
+  try {
+    const ticket = await Ticket.findById(ticketId);
+    if (!ticket) return;
 
-export const onTicketCreated = inngest.createFunction(
-  { id: "on-ticket-create", retries: 2 },
-  { event: "ticket/created" },
-  async ({ event, step }) => {
-    try {
-      const { ticketId } = event.data;
-      const ticket = await step.run("fetch-ticket", async () => {
-        const ticketObject = await Ticket.findById(ticketId);
-        if (!ticketObject) throw new NonRetriableError("Ticket not found");
-        return ticketObject;
+    const aiResponse = await analyzeTicket(ticket);
+    let relatedSkills = [];
+
+    if (aiResponse) {
+      relatedSkills = aiResponse.relatedSkills || [];
+      await Ticket.findByIdAndUpdate(ticketId, {
+        priority: ["low", "medium", "high"].includes(aiResponse.priority?.toLowerCase())
+          ? aiResponse.priority.toLowerCase()
+          : "medium",
+        helpfulNotes: aiResponse.helpfulNotes || "",
+        status: "IN_PROGRESS",
+        relatedSkills,
       });
-
-      await step.run("update-ticket-status", async () => {
-        await Ticket.findOneAndUpdate({ _id: ticketId }, { status: "TODO" }, { new: true });
-      });
-
-      const aiResponse = await analyzeTicket(ticket);
-
-      const relatedSkills = await step.run("ai-processing", async () => {
-        let skills = [];
-        if (aiResponse) {
-          await Ticket.findByIdAndUpdate(ticketId, {
-            priority: ["low", "medium", "high"].includes(aiResponse.priority) ? aiResponse.priority : "medium",
-            helpfulNotes: aiResponse.helpfulNotes || [],
-            status: "IN_PROGRESS",
-            relatedSkills: aiResponse.relatedSkills || [],
-          });
-          skills = aiResponse.relatedSkills || [];
-        }
-        return skills;
-      });
-
-      await step.run("assign-moderator", async () => {
-        let user = await User.findOne({
-          role: "moderator",
-          skills: { $elemMatch: { $regex: relatedSkills.join("|"), $options: "i" } },
-        });
-        if (!user) user = await User.findOne({ role: "admin" });
-        await Ticket.findByIdAndUpdate(ticketId, { assignedTo: user?._id || null });
-        return user;
-      });
-
-      return { success: true };
-    } catch (error) {
-      console.error(`❌ Error creating ticket: ${error.message}`);
-      return { success: false };
     }
+
+    let moderator = await User.findOne({
+      role: "moderator",
+      skills: { $elemMatch: { $regex: relatedSkills.join("|"), $options: "i" } },
+    });
+    if (!moderator) moderator = await User.findOne({ role: "admin" });
+
+    await Ticket.findByIdAndUpdate(ticketId, { assignedTo: moderator?._id || null });
+  } catch (error) {
+    console.error("AI processing failed for ticket", ticketId, error.message);
   }
-);
+};
 
 // ── Controller ─────────────────────────────────────────
 export const createTicket = async (req, res) => {
@@ -190,14 +169,8 @@ export const createTicket = async (req, res) => {
       createdByName: createdByName || "Anonymous",
     });
 
-    try {
-      await inngest.send({
-        name: "ticket/created",
-        data: { ticketId: newTicket._id.toString(), title: newTicket.title, description: newTicket.description },
-      });
-    } catch (inngestError) {
-      console.error("Failed to send inngest event (ticket was still created):", inngestError.message);
-    }
+    // Run AI analysis + auto-assignment in the background (doesn't block the response)
+    processTicketWithAI(newTicket._id);
 
     return res.status(201).json({ message: "Ticket created successfully", ticket: newTicket });
   } catch (error) {
@@ -282,3 +255,4 @@ ticketRoutes.get("/:id", getTicket);
 ticketRoutes.post("/", createTicket);
 ticketRoutes.put("/:id", updateTicket);
 ticketRoutes.put("/:id/status", updateTicketStatus);
+                  
